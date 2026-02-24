@@ -1,0 +1,131 @@
+<!DOCTYPE html>
+<html>
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1">
+    <title>Trốn Tìm 3D - Mobile OK</title>
+    <script src="https://cdn.babylonjs.com/babylon.js"></script>
+    <script src="https://cdn.babylonjs.com/gui/babylon.gui.min.js"></script>
+    <style> 
+        html, body { margin: 0; padding: 0; overflow: hidden; background: #000; font-family: Arial; }
+        canvas { width: 100% !important; height: 100% !important; touch-action: none; display: block; }
+        #loading { position: fixed; top: 50%; left: 50%; transform: translate(-50%,-50%); color: white; font-size: 28px; text-align: center; z-index: 100; background: rgba(0,0,0,0.8); padding: 20px; border-radius: 10px; }
+    </style>
+</head>
+<body>
+    <div id="loading">TAP để chơi! Đang load 3D... <br>(Nếu đen: Refresh + Desktop site)</div>
+    <canvas id="renderCanvas"></canvas>
+    <script>
+        const canvas = document.getElementById("renderCanvas");
+        const loading = document.getElementById("loading");
+
+        // Engine với WebGL fix mobile
+        const engine = new BABYLON.Engine(canvas, true, { preserveDrawingBuffer: true, stencil: true, disableWebGL2Support: false });
+
+        if (!BABYLON.Engine.isSupported()) {
+            loading.innerHTML = "WebGL không hỗ trợ! Update Chrome.";
+        }
+
+        function createScene() {
+            const scene = new BABYLON.Scene(engine);
+            scene.clearColor = new BABYLON.Color4(0.15, 0.2, 0.4, 1);
+
+            // UniversalCamera touch/mobile siêu tốt
+            const camera = new BABYLON.UniversalCamera("cam", new BABYLON.Vector3(5, 2, 5), scene);
+            camera.speed = 0.6;
+            camera.checkCollisions = true;
+            camera.applyGravity = true;
+            camera.ellipsoid = new BABYLON.Vector3(0.5, 1.2, 0.5);
+            camera.attachControl(canvas, true, true); // Force touch
+
+            scene.gravity = new BABYLON.Vector3(0, -0.2, 0);
+            scene.collisionsEnabled = true;
+
+            // Lights sáng rõ
+            new BABYLON.HemisphericLight("light", new BABYLON.Vector3(0,1,0), scene).intensity = 1.2;
+            new BABYLON.PointLight("plight", new BABYLON.Vector3(0,10,0), scene).intensity = 1;
+
+            // Ground
+            const ground = BABYLON.MeshBuilder.CreateGround("ground", {width:70, height:70}, scene);
+            ground.checkCollisions = true;
+            ground.material = new BABYLON.StandardMaterial("gmat", scene);
+            ground.material.diffuseColor = new BABYLON.Color3(0.5, 0.5, 0.6);
+
+            // Walls (mê cung)
+            const wallMat = new BABYLON.StandardMaterial("wallMat", scene);
+            wallMat.diffuseColor = new BABYLON.Color3(0.8, 0.8, 0.9);
+            function wall(x, z, w=1, h=5, d=1) {
+                const m = BABYLON.MeshBuilder.CreateBox("w", {width:w, height:h, depth:d}, scene);
+                m.position = new BABYLON.Vector3(x, h/2, z);
+                m.material = wallMat; m.checkCollisions = true;
+            }
+            // Outer
+            wall(0,-35,70,5,1); wall(0,35,70,5,1); wall(-35,0,1,5,70); wall(35,0,1,5,70);
+            // Inner
+            wall(0,0,20,5,1); wall(20,20,1,5,20); wall(-20,-20,1,5,20); wall(15,-15,15,5,1);
+            wall(-15,15,1,5,15); wall(0,25,1,5,12); wall(-25,0,12,5,1);
+
+            // Seeker đỏ glow
+            const seeker = BABYLON.MeshBuilder.CreateBox("seeker", {size:2.2}, scene);
+            seeker.position.y = 1.1;
+            seeker.material = new BABYLON.StandardMaterial("sMat", scene);
+            seeker.material.diffuseColor = new BABYLON.Color3(1,0.1,0.1);
+            seeker.material.emissiveColor = new BABYLON.Color3(0.6,0.1,0.1);
+
+            const waypoints = [new BABYLON.Vector3(30,1,30), new BABYLON.Vector3(25,1,10), new BABYLON.Vector3(10,1,25), new BABYLON.Vector3(-25,1,30), new BABYLON.Vector3(-30,1,15), new BABYLON.Vector3(-20,1,-25), new BABYLON.Vector3(20,1,-30), new BABYLON.Vector3(30,1,-20)];
+            let wp = 0; let speed = 0.12;
+
+            // UI
+            const ui = BABYLON.GUI.AdvancedDynamicTexture.CreateFullscreenUI("ui");
+            const txt = BABYLON.GUI.TextBlock.CreateVertical("txt", "TAP MÀN HÌNH!\nHIDE 10s");
+            txt.color = "yellow"; txt.fontSize = 36; txt.shadowBlur = 10; txt.shadowColor = "black";
+            txt.textHorizontalAlignment = BABYLON.GUI.Control.HORIZONTAL_ALIGNMENT_CENTER;
+            txt.textVerticalAlignment = BABYLON.GUI.Control.VERTICAL_ALIGNMENT_TOP;
+            ui.addControl(txt);
+
+            let started = false; let hideStart = performance.now()/1000; let gameStart = 0;
+            const HIDE = 10; const WIN = 60;
+
+            scene.onPointerObservable.add(() => { if(!started) loading.style.display = "none"; });
+
+            scene.registerBeforeRender(() => {
+                if(!started) {
+                    if((performance.now()/1000 - hideStart) > HIDE) {
+                        started = true; gameStart = performance.now()/1000;
+                        txt.text = "TRỐN! Còn 60s"; txt.color = "white";
+                    }
+                    return;
+                }
+
+                // Patrol
+                const target = waypoints[wp];
+                const dir = BABYLON.Vector3.Normalize(target.subtract(seeker.position));
+                seeker.position.addInPlace(dir.scale(speed));
+                if(BABYLON.Vector3.Distance(seeker.position, target) < 2.5) wp = (wp+1)%waypoints.length;
+
+                // Caught
+                if(BABYLON.Vector3.Distance(camera.position, seeker.position) < 5) {
+                    txt.text = "BỊ BẮT! Reload chơi lại"; txt.color = "red"; started = false; return;
+                }
+
+                // Win
+                const elapsed = (performance.now()/1000) - gameStart;
+                if(elapsed > WIN) {
+                    txt.text = "THẮNG! Siêu đỉnh! Reload"; txt.color = "lime"; started = false; return;
+                }
+                txt.text = `Còn ${Math.ceil(WIN - elapsed)}s`;
+            });
+
+            // Resize fix mobile
+            window.addEventListener("resize", () => engine.resize());
+            engine.resize();
+
+            return scene;
+        }
+
+        const scene = createScene();
+        engine.runRenderLoop(() => scene.render());
+        setTimeout(() => loading.style.display = "none", 4000);
+    </script>
+</body>
+</html>
